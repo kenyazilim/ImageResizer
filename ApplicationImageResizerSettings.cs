@@ -8,6 +8,31 @@ using System.IO;
 using System.Text;
 using System.Web.Hosting;
 using ImageResizer;
+// Watermark gibi eklentileri kullanabilmek için ilgili using ifadesi eklenmelidir.
+// using ImageResizer.Plugins.Watermark; 
+
+/// <summary>
+/// Hangi eklentilerin dinamik olarak etkinleştirileceğini belirleyen ayarları tutar.
+/// Gerçek bir uygulamada, bu sınıfın değerleri bir veritabanından,
+/// bir JSON yapılandırma dosyasından veya başka bir dış kaynaktan doldurulabilir.
+/// </summary>
+public class PluginSettings
+{
+    /// <summary>
+    /// Watermark (filigran) eklentisini etkinleştirir.
+    /// </summary>
+    public bool EnableWatermark { get; set; } = false; // Varsayılan olarak kapalı
+
+    /// <summary>
+    /// HybridCache (disk ve bellek önbellekleme) eklentisini etkinleştirir.
+    /// </summary>
+    public bool EnableHybridCache { get; set; } = true; // Varsayılan olarak açık
+
+    // Gelecekte eklenebilecek diğer plugin'ler için buraya yeni özellikler eklenebilir.
+    // public bool EnableRedEyeCorrection { get; set; } = false;
+    // public bool EnableFaceDetection { get; set; } = false;
+}
+
 
 /// <summary>
 /// ImageResizer için dinamik ve kod tabanlı yapılandırma sağlar.
@@ -83,16 +108,18 @@ public static class ApplicationImageResizerSettings
             // \"R5_\" ile başlamalıdır. Geçersiz bir anahtar, lisanslı özelliklerin çalışmamasına neden olur.
             string licenseKey = "R5_..."; // Gerçek lisans anahtarınızla değiştirin.
 
-            // defaultPipelineCommands: URL\"de özel bir ayar belirtilmediği sürece, tüm görsellere uygulanacak varsayılan komut setidir.
+            // defaultPipelineCommands: URL'de özel bir ayar belirtilmediği sürece, tüm görsellere uygulanacak varsayılan komut setidir.
             // Bu, sitenizdeki tüm görseller için tutarlı bir kalite ve optimizasyon standardı sağlar.
-            // Örneğin, tüm görsellerin varsayılan olarak belirli bir kalitede (quality=60) ve WebP formatında (webp.quality=30) işlenmesini sağlar.
-            // \"&\" karakteri XML içinde \"&amp;\" olarak kaçırılmalıdır.
-            // autorotate=false: Görselin EXIF verisindeki yönlendirme bilgisini dikkate almadan döndürmeyi devre dışı bırakır.
+            //
+            // Önerilen Ayarların Açıklaması:
+            // quality=75: Hem JPEG hem de WebP formatları için varsayılan kalite seviyesidir. 75, görsel kalite ve dosya boyutu arasında iyi bir denge sunar.
+            // format=webp: Tarayıcı destekliyorsa, görüntüyü otomatik olarak WebP formatına dönüştürür. WebP, genellikle aynı kalitede daha küçük dosyalar sunar.
+            //              Tarayıcı WebP desteklemiyorsa, ImageResizer otomatik olarak JPEG gibi varsayılan bir formata döner.
+            // autorotate=true: Görselin EXIF meta verisindeki yönlendirme bilgisine göre otomatik olarak döndürülmesini sağlar. Özellikle mobil cihazlardan gelen fotoğraflar için önemlidir.
             // subsampling=420: JPEG sıkıştırmasında renk alt örneklemesini belirler. 4:2:0, iyi sıkıştırma ve kabul edilebilir kalite dengesi sunar.
-            // strip=all: Görselden tüm meta verileri (EXIF, IPTC vb.) kaldırır. Gizliliği artırır ve dosya boyutunu küçültür.
-            // jpeg.progressive=true: JPEG görsellerini aşamalı (progressive) olarak kaydeder. Bu, görselin yavaş yüklenen bağlantılarda bile
-            //                      tümünün bulanık bir versiyonunun görünmesini sağlar, ardından detaylar yüklenir.
-            string defaultPipelineCommands = "quality=60&amp;webp.lossless=100&amp;webp.quality=30&amp;autorotate=false&amp;subsampling=420&amp;strip=all&amp;jpeg.progressive=true";
+            // strip=all: Görselden tüm meta verileri (EXIF, IPTC vb.) kaldırır. Bu, gizliliği artırır ve dosya boyutunu önemli ölçüde küçültür.
+            // jpeg.progressive=true: JPEG görsellerini aşamalı (progressive) olarak kaydeder. Bu, yavaş bağlantılarda kullanıcı deneyimini iyileştirir.
+            string defaultPipelineCommands = "quality=75&amp;format=webp&amp;autorotate=true&amp;subsampling=420&amp;strip=all&amp;jpeg.progressive=true";
 
             // =================================================================================================
             // BÖLÜM 2: XML YAPILANDIRMASINI OLUŞTURMA
@@ -141,21 +168,47 @@ public static class ApplicationImageResizerSettings
             }
 
             // --- Plugin\"lerin Kurulması ---
+
+            // Dinamik eklenti ayarlarını buradan yükleyin (örneğin veritabanından)
+            var pluginSettings = new PluginSettings
+            {
+                EnableWatermark = false, // Bu değeri dinamik olarak ayarlayın
+                EnableHybridCache = true // Bu değeri de dinamik olarak ayarlayabilirsiniz
+            };
+
+
+            // Temel ve Gerekli Plugin'ler
+            new DefaultEncoder().Install(c); // JPEG, PNG, GIF formatları için varsayılan kodlayıcıları sağlar.
+            new ClientCache().Install(c); // Tarayıcı önbellekleme (Cache-Control başlıkları) yönetimi.
+            //new MvcRoutingShim().Install(c); // ASP.NET MVC ile uyumluluk için gereklidir.
+            new Presets().Install(c); // URL'de önceden tanımlanmış ayar setlerini kullanmayı sağlar (?preset=...).
+            new DefaultSettings().Install(c); // Varsayılan ayarları uygular.
+            //new AutoRotate().Install(c); // EXIF verisine göre görselleri otomatik döndürür.
+
             // ImageflowBackendPlugin: Imageflow kütüphanesini kullanarak gelişmiş görüntü işleme yetenekleri sağlar.
             // Bu plugin, yüksek performanslı ve modern görüntü işleme algoritmalarını devreye sokar.
             new ImageflowBackendPlugin().Install(c);
 
-            // HybridCachePlugin: Disk ve bellek tabanlı hibrit önbellekleme sağlar.
-            // Bu, sık erişilen görsellerin daha hızlı sunulmasına yardımcı olur.
-            // CacheSizeMb: Önbelleğin disk üzerindeki maksimum boyutu (MB). Varsayılan 1024 MB\"dir.
-            // WriteQueueMemoryMb: Yazma kuyruğu için ayrılan bellek (MB). Varsayılan 100 MB\"dir.
-            var cacheOptions = new HybridCacheOptions(safeCachePath)
+            // İsteğe Bağlı Plugin'ler (Dinamik olarak etkinleştirilir)
+            if (pluginSettings.EnableWatermark)
             {
-                CacheSizeMb = 2048,
-                WriteQueueMemoryMb = 128
-            };
-            new HybridCachePlugin(cacheOptions, logger).Install(c);
-            
+                // new Watermark().Install(c);
+            }
+
+            // HybridCachePlugin: Disk ve bellek tabanlı hibrit önbellekleme sağlar.
+            if (pluginSettings.EnableHybridCache)
+            {
+                // Bu, sık erişilen görsellerin daha hızlı sunulmasına yardımcı olur.
+                // CacheSizeMb: Önbelleğin disk üzerindeki maksimum boyutu (MB). Varsayılan 1024 MB\"dir.
+                // WriteQueueMemoryMb: Yazma kuyruğu için ayrılan bellek (MB). Varsayılan 100 MB\"dir.
+                var cacheOptions = new HybridCacheOptions(safeCachePath)
+                {
+                    CacheSizeMb = 2048,
+                    WriteQueueMemoryMb = 128
+                };
+                new HybridCachePlugin(cacheOptions, logger).Install(c);
+            }
+
 
             // Not: SizeLimiting ve Diagnostic plugin\"leri, yukarıda XML içinde tanımlandığı ve
             // Config kurucusu tarafından otomatik olarak yüklendiği için burada tekrar \"new Diagnostic().Install(c);\"
