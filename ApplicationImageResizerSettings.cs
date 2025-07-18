@@ -121,6 +121,10 @@ public static class ApplicationImageResizerSettings
             // jpeg.progressive=true: JPEG görsellerini aşamalı (progressive) olarak kaydeder. Bu, yavaş bağlantılarda kullanıcı deneyimini iyileştirir.
             string defaultPipelineCommands = "quality=75&amp;format=webp&amp;autorotate=true&amp;subsampling=420&amp;strip=all&amp;jpeg.progressive=true";
 
+            // clientCacheHours: Tarayıcıların görselleri ne kadar süreyle önbellekte tutacağını saat cinsinden belirler.
+            // 8760 saat = 1 yıl.
+            double clientCacheHours = 8760;
+
             // =================================================================================================
             // BÖLÜM 2: XML YAPILANDIRMASINI OLUŞTURMA
             // =================================================================================================
@@ -132,10 +136,14 @@ public static class ApplicationImageResizerSettings
             StringBuilder resizerXmlConfig = new StringBuilder();
 
             resizerXmlConfig.AppendLine("<resizer>");
-            resizerXmlConfig.AppendLine("<sizelimits totalMegapixels=\"" + maxTotalMegapixels + "\" width=\"" + maxImageWidth + "\" height=\"" + maxImageHeight + "\" />");
-            resizerXmlConfig.AppendLine("<pipeline defaultCommands=\"" + defaultPipelineCommands + "\" />");
-            resizerXmlConfig.AppendLine("<diagnostics enableFor=\"" + diagnosticsMode + "\" />");
+
+            resizerXmlConfig.AppendLine($"<sizelimits totalMegapixels=\"{maxTotalMegapixels}\" width=\"{maxImageWidth}\" height=\"{maxImageHeight}\" />");
+            resizerXmlConfig.AppendLine($"<pipeline defaultCommands=\"{defaultPipelineCommands}\" />");
+            resizerXmlConfig.AppendLine($"<diagnostics enableFor=\"{diagnosticsMode}\" />");
+            // ClientCache ayarını dakika cinsinden XML'e ekliyoruz.
+            resizerXmlConfig.AppendLine($"<clientcache minutes=\"{clientCacheHours * 60}\" />");
             resizerXmlConfig.AppendLine("</resizer>");
+
 
             // =================================================================================================
             // BÖLÜM 3: YAPILANDIRMAYI VE PLUGIN\"LERİ YÜKLEME (DOĞRU YÖNTEM)
@@ -180,10 +188,8 @@ public static class ApplicationImageResizerSettings
             // Temel ve Gerekli Plugin'ler
             new DefaultEncoder().Install(c); // JPEG, PNG, GIF formatları için varsayılan kodlayıcıları sağlar.
             new ClientCache().Install(c); // Tarayıcı önbellekleme (Cache-Control başlıkları) yönetimi.
-            //new MvcRoutingShim().Install(c); // ASP.NET MVC ile uyumluluk için gereklidir.
             new Presets().Install(c); // URL'de önceden tanımlanmış ayar setlerini kullanmayı sağlar (?preset=...).
             new DefaultSettings().Install(c); // Varsayılan ayarları uygular.
-            //new AutoRotate().Install(c); // EXIF verisine göre görselleri otomatik döndürür.
 
             // ImageflowBackendPlugin: Imageflow kütüphanesini kullanarak gelişmiş görüntü işleme yetenekleri sağlar.
             // Bu plugin, yüksek performanslı ve modern görüntü işleme algoritmalarını devreye sokar.
@@ -191,8 +197,8 @@ public static class ApplicationImageResizerSettings
 
             // İsteğe Bağlı Plugin'ler (Dinamik olarak etkinleştirilir)
             if (pluginSettings.EnableWatermark)
-            {
-                // new Watermark().Install(c);
+            {                 
+                 //
             }
 
             // HybridCachePlugin: Disk ve bellek tabanlı hibrit önbellekleme sağlar.
