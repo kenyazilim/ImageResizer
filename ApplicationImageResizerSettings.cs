@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using System.Web.Hosting;
 using ImageResizer;
+using ImageResizer.Plugins.Licensing;
 // Watermark gibi eklentileri kullanabilmek için ilgili using ifadesi eklenmelidir.
 // using ImageResizer.Plugins.Watermark; 
 
@@ -67,6 +68,18 @@ public static class ApplicationImageResizerSettings
             // ilk kontrolü geçip sıraya girmesi durumunda, yapılandırmanın tekrar tekrar yapılmasını önler.
             if (_isConfigured) return;
 
+
+
+            // --- Plugin\"lerin Kurulması ---
+
+            // Dinamik eklenti ayarlarını buradan yükleyin (örneğin veritabanından)
+            var pluginSettings = new PluginSettings
+            {
+                EnableWatermark = false, // Bu değeri dinamik olarak ayarlayın
+                EnableHybridCache = true // Bu değeri de dinamik olarak ayarlayabilirsiniz
+            };
+
+
             // =================================================================================================
             // BÖLÜM 1: DİNAMİK AYARLARI DIŞ KAYNAKTAN OKUMA
             // =================================================================================================
@@ -119,11 +132,27 @@ public static class ApplicationImageResizerSettings
             // subsampling=420: JPEG sıkıştırmasında renk alt örneklemesini belirler. 4:2:0, iyi sıkıştırma ve kabul edilebilir kalite dengesi sunar.
             // strip=all: Görselden tüm meta verileri (EXIF, IPTC vb.) kaldırır. Bu, gizliliği artırır ve dosya boyutunu önemli ölçüde küçültür.
             // jpeg.progressive=true: JPEG görsellerini aşamalı (progressive) olarak kaydeder. Bu, yavaş bağlantılarda kullanıcı deneyimini iyileştirir.
-            string defaultPipelineCommands = "quality=75&amp;format=webp&amp;autorotate=true&amp;subsampling=420&amp;strip=all&amp;jpeg.progressive=true";
+            string defaultPipelineCommands = "quality=30&amp;format=webp&amp;autorotate=false&amp;subsampling=420&amp;strip=all&amp;jpeg.progressive=true";
 
             // clientCacheHours: Tarayıcıların görselleri ne kadar süreyle önbellekte tutacağını saat cinsinden belirler.
             // 8760 saat = 1 yıl.
             double clientCacheHours = 8760;
+
+
+            // --- HybridCache için Güvenli ve Uyumlu Önbellek Yolu ---
+            // ASP.NET uygulamasının App_Data klasörünün fiziksel yolunu alır.
+            string appDataPath = HostingEnvironment.MapPath("~/App_Data");
+            // App_Data altında \"cache\" adında bir dizin oluşturur. Bu dizin, HybridCache\"
+            // önbellek dosyalarını depolayacağı yerdir. Güvenlik ve erişim izinleri açısından uygun bir konumdur.
+            string safeCachePath = Path.Combine(appDataPath, "cache");
+            // Eğer önbellek dizini mevcut değilse, oluşturur.
+            if (!Directory.Exists(safeCachePath))
+            {
+                Directory.CreateDirectory(safeCachePath);
+            }
+
+            int hybridCacheCacheSizeMb = 2048;
+            int hybridWriteQueueMemoryMb = 50;
 
             // =================================================================================================
             // BÖLÜM 2: XML YAPILANDIRMASINI OLUŞTURMA
@@ -137,11 +166,39 @@ public static class ApplicationImageResizerSettings
 
             resizerXmlConfig.AppendLine("<resizer>");
 
+            resizerXmlConfig.AppendLine("<plugins>");
+            // Imageflow'u adıyla eklemek, Config sınıfının onu ve tüm bağımlılıklarını
+            // doğru bir şekilde bulup yüklemesini sağlar. Bu, WebP sorununu çözen anahtar adımdır.
+            resizerXmlConfig.AppendLine("<add name=\"Imageflow\" />");
+
+            // HybridCache, performansı artırmak için işlenmiş görüntüleri önbelleğe alır.
+            if (pluginSettings.EnableHybridCache)
+                resizerXmlConfig.AppendLine("<add name=\"HybridCache\" />");
+
+            //if (pluginSettings.EnableWatermark)
+
+                // --- Lisanslama Plugin\"lerinin Kurulması ---
+                // StaticLicenseProvider: Lisans anahtarını doğrudan koddan alır ve ImageResizer\"a kaydeder.
+                // Bu, lisans anahtarının web.config\"de görünmesini engeller ve daha güvenli bir yöntem sunar.
+                if (!string.IsNullOrEmpty(licenseKey) && licenseKey.StartsWith("R5_"))
+                resizerXmlConfig.AppendLine($"<add name=\"Licensing\" key=\"{licenseKey}\" />");
+
+            resizerXmlConfig.AppendLine("</plugins>");
+
+
             resizerXmlConfig.AppendLine($"<sizelimits totalMegapixels=\"{maxTotalMegapixels}\" width=\"{maxImageWidth}\" height=\"{maxImageHeight}\" />");
             resizerXmlConfig.AppendLine($"<pipeline defaultCommands=\"{defaultPipelineCommands}\" />");
             resizerXmlConfig.AppendLine($"<diagnostics enableFor=\"{diagnosticsMode}\" />");
             // ClientCache ayarını dakika cinsinden XML'e ekliyoruz.
             resizerXmlConfig.AppendLine($"<clientcache minutes=\"{clientCacheHours * 60}\" />");
+
+
+            // Bu, sık erişilen görsellerin daha hızlı sunulmasına yardımcı olur.
+            // CacheSizeMb: Önbelleğin disk üzerindeki maksimum boyutu (MB). Varsayılan 1024 MB\"dir.
+            // WriteQueueMemoryMb: Yazma kuyruğu için ayrılan bellek (MB). Varsayılan 100 MB\"dir.
+            if (pluginSettings.EnableHybridCache)
+                resizerXmlConfig.AppendLine($"<hybridCache dir=\"{safeCachePath}\" cacheSizeMb=\"{hybridCacheCacheSizeMb}\" inMemorySizeMb=\"{hybridWriteQueueMemoryMb}\" />");
+            
             resizerXmlConfig.AppendLine("</resizer>");
 
 
@@ -159,31 +216,12 @@ public static class ApplicationImageResizerSettings
             // Config sınıfının kaynak kodunda (resizer-5.1.0-rc01/core/Configuration/Config.cs) bu kurucu mevcuttur.
             var c = new Config(resizerSection);
 
+
             // Artık \"c\" (Config) nesnesi tam ve kararlı olduğu için, üzerine diğer plugin\"leri güvenle kurabiliriz.
             // Bu logger, özellikle HybridCachePlugin gibi bazı plugin\"ler için gereklidir.
             ILogger logger = NullLoggerFactory.Instance.CreateLogger("ImageResizer");
 
-            // --- HybridCache için Güvenli ve Uyumlu Önbellek Yolu ---
-            // ASP.NET uygulamasının App_Data klasörünün fiziksel yolunu alır.
-            string appDataPath = HostingEnvironment.MapPath("~/App_Data");
-            // App_Data altında \"cache\" adında bir dizin oluşturur. Bu dizin, HybridCache\"
-            // önbellek dosyalarını depolayacağı yerdir. Güvenlik ve erişim izinleri açısından uygun bir konumdur.
-            string safeCachePath = Path.Combine(appDataPath, "cache");
-            // Eğer önbellek dizini mevcut değilse, oluşturur.
-            if (!Directory.Exists(safeCachePath))
-            {
-                Directory.CreateDirectory(safeCachePath);
-            }
-
-            // --- Plugin\"lerin Kurulması ---
-
-            // Dinamik eklenti ayarlarını buradan yükleyin (örneğin veritabanından)
-            var pluginSettings = new PluginSettings
-            {
-                EnableWatermark = false, // Bu değeri dinamik olarak ayarlayın
-                EnableHybridCache = true // Bu değeri de dinamik olarak ayarlayabilirsiniz
-            };
-
+            
 
             // Temel ve Gerekli Plugin'ler
             new DefaultEncoder().Install(c); // JPEG, PNG, GIF formatları için varsayılan kodlayıcıları sağlar.
@@ -196,24 +234,24 @@ public static class ApplicationImageResizerSettings
             new ImageflowBackendPlugin().Install(c);
 
             // İsteğe Bağlı Plugin'ler (Dinamik olarak etkinleştirilir)
-            if (pluginSettings.EnableWatermark)
-            {                 
-                 //
-            }
+            //if (pluginSettings.EnableWatermark)
+            //{                 
+            //     //
+            //}
 
             // HybridCachePlugin: Disk ve bellek tabanlı hibrit önbellekleme sağlar.
-            if (pluginSettings.EnableHybridCache)
-            {
-                // Bu, sık erişilen görsellerin daha hızlı sunulmasına yardımcı olur.
-                // CacheSizeMb: Önbelleğin disk üzerindeki maksimum boyutu (MB). Varsayılan 1024 MB\"dir.
-                // WriteQueueMemoryMb: Yazma kuyruğu için ayrılan bellek (MB). Varsayılan 100 MB\"dir.
-                var cacheOptions = new HybridCacheOptions(safeCachePath)
-                {
-                    CacheSizeMb = 2048,
-                    WriteQueueMemoryMb = 128
-                };
-                new HybridCachePlugin(cacheOptions, logger).Install(c);
-            }
+            //if (pluginSettings.EnableHybridCache)
+            //{
+            //    // Bu, sık erişilen görsellerin daha hızlı sunulmasına yardımcı olur.
+            //    // CacheSizeMb: Önbelleğin disk üzerindeki maksimum boyutu (MB). Varsayılan 1024 MB\"dir.
+            //    // WriteQueueMemoryMb: Yazma kuyruğu için ayrılan bellek (MB). Varsayılan 100 MB\"dir.
+            //    var cacheOptions = new HybridCacheOptions(safeCachePath)
+            //    {
+            //        CacheSizeMb = 2048,
+            //        WriteQueueMemoryMb = 128
+            //    };
+            //    new HybridCachePlugin(cacheOptions, logger).Install(c);
+            //}
 
 
             // Not: SizeLimiting ve Diagnostic plugin\"leri, yukarıda XML içinde tanımlandığı ve
@@ -225,10 +263,10 @@ public static class ApplicationImageResizerSettings
             // --- Lisanslama Plugin\"lerinin Kurulması ---
             // StaticLicenseProvider: Lisans anahtarını doğrudan koddan alır ve ImageResizer\"a kaydeder.
             // Bu, lisans anahtarının web.config\"de görünmesini engeller ve daha güvenli bir yöntem sunar.
-            if (!string.IsNullOrEmpty(licenseKey) && licenseKey.StartsWith("R5_"))
-            {
-                new StaticLicenseProvider(licenseKey).Install(c);
-            }
+            //if (!string.IsNullOrEmpty(licenseKey) && licenseKey.StartsWith("R5_"))
+            //{
+            //    new StaticLicenseProvider(licenseKey).Install(c);
+            //}
             // WebConfigLicenseReader: web.config\"deki <licenses> bölümünden lisansları okur.
             // Bu plugin, hem koddan hem de web.config\"den lisans okunabilmesini sağlar (opsiyonel).
             // Eğer web.config\"de lisans tanımlıysa, bu plugin onu da yükleyecektir.
